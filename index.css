@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Baloo 2", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-brand-bg: #FFF8E1;
+  --color-brand-surface: #FFFFFF;
+  --color-brand-text: #212121;
+  --color-brand-primary: #FFC0CB;
+  --color-brand-green: #90EE90;
+  --color-brand-accent: #AEC6CF;
+  --color-brand-highlight: #FDFD96;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+}
