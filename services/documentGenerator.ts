@@ -200,7 +200,7 @@ const renderPromptToHtmlElement = async (promptData: PedagogicalPrompt, imageUrl
                 p.style.marginTop = '20px';
                 p.style.color = '#111';
             } else {
-                p.innerText = line;
+                p.innerText = line || '\u00A0'; // Use non-breaking space for empty lines
                 p.style.fontSize = '16px';
             }
             container.appendChild(p);
@@ -220,7 +220,10 @@ export const generatePdf = async (promptData: PedagogicalPrompt, imageUrl: strin
     let y = 20;
 
     const addText = (text: string, size: number, style: 'normal' | 'bold' | 'italic' = 'normal') => {
-        if (!text || text.trim() === '') return;
+        if (!text || text.trim() === '') {
+            y += 5; // Add space for empty lines
+            return;
+        }
         const splitText = doc.splitTextToSize(text, usableWidth);
         const textHeight = doc.getTextDimensions(splitText).h;
         if (y + textHeight > 280) {
@@ -327,7 +330,7 @@ export const generateDocx = async (promptData: PedagogicalPrompt, imageUrl: stri
             });
         }
         return new Paragraph({
-            children: [new TextRun({ text: line, size: 24 })],
+            children: [new TextRun({ text: line || '\u00A0', size: 24 })],
             alignment: isHeader ? AlignmentType.LEFT : AlignmentType.JUSTIFIED,
         });
     };

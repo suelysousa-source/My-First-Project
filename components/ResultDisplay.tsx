@@ -435,7 +435,7 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ result, isLoading,
                   isSaved ? "Atividade Salva" : "Proposta Pedagógica Gerada"
                 )}
             </h2>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-start sm:justify-end w-full sm:w-auto">
                 <DownloadButton onDownload={handleDownload} isDownloading={isDownloading} />
                 <button
                     onClick={handleCanvaGeneration}

@@ -156,7 +156,7 @@ const App: React.FC = () => {
           {error && (
              <div className="p-4 bg-red-200 border-2 border-red-500 text-red-800 rounded-lg shadow-lg font-bold" role="alert">
               <strong className="font-bold">Oops! Algo deu errado: </strong>
-              <span className="block sm:inline mt-2">{error}</span>
+              <div className="mt-2 whitespace-pre-wrap text-sm font-medium">{error}</div>
             </div>
           )}
 

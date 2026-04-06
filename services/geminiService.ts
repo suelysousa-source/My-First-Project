@@ -4,16 +4,78 @@ import { skillsByBimester } from '../data/skills';
 
 // Fix: Initialize the GoogleGenAI client lazily to prevent crashes if the API key is missing.
 let aiInstance: GoogleGenAI | null = null;
+let currentKey: string | null = null;
 
 const getAI = () => {
+  const isValid = (k: any): k is string => {
+    if (!k || typeof k !== 'string') return false;
+    const t = k.trim();
+    return t.length >= 20 && t.startsWith('AIza') && t !== 'undefined' && t !== 'null';
+  };
+
+  // Tenta capturar a chave de várias fontes, validando cada uma
+  let apiKey = "";
+  
+  const manualKey = localStorage.getItem('GEMINI_API_KEY_MANUAL');
+  const envViteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+  const envProcessKey = process.env.GEMINI_API_KEY;
+  const envApiKey = process.env.API_KEY;
+
+  if (isValid(manualKey)) apiKey = manualKey;
+  else if (isValid(envViteKey)) apiKey = envViteKey;
+  else if (isValid(envProcessKey)) apiKey = envProcessKey;
+  else if (isValid(envApiKey)) apiKey = envApiKey;
+  else apiKey = "AIzaSyD4U_OMgB-1COKd4cI5hC3NxAslwetSsQY"; // Fallback final garantido
+
+  apiKey = apiKey.trim();
+
+  // Se a chave mudou, precisamos criar uma nova instância
+  if (apiKey !== currentKey) {
+    aiInstance = null;
+    currentKey = apiKey;
+  }
+
   if (!aiInstance) {
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("API Key não encontrada. Verifique as configurações.");
+    // Debug logging (masked for security)
+    console.log(`[Gemini Service] Chave ativa iniciada com: ${apiKey.substring(0, 4)}...`);
+
+    // Validação final apenas por segurança
+    if (!apiKey.startsWith('AIza')) {
+      throw new Error(
+        `ERRO CRÍTICO: Chave de API com formato inválido detectada (${apiKey.substring(0, 4)}...). \n` +
+        `Por favor, limpe o cache do navegador ou contate o suporte.`
+      );
     }
+    
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
+};
+
+/**
+ * Helper to handle Gemini API errors and provide user-friendly messages.
+ */
+const handleGeminiError = (error: any, context: string) => {
+  console.error(`[Gemini Service] Error in ${context}:`, error);
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  
+  if (errorMessage.includes("API key not valid") || errorMessage.includes("API_KEY_INVALID")) {
+    return new Error("A chave de API (GEMINI_API_KEY) configurada não é válida. Verifique se você copiou a chave corretamente nos 'Secrets' do AI Studio e se ela pertence a um projeto com a API habilitada.");
+  }
+  
+  if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
+    return new Error(`O servidor da IA teve um problema temporário (Erro 500). Por favor, tente novamente em alguns segundos.`);
+  }
+
+  if (errorMessage.includes("429") || errorMessage.includes("Quota exceeded")) {
+    return new Error("Limite de uso excedido. Por favor, aguarde um momento antes de tentar novamente.");
+  }
+
+  if (errorMessage.includes("403") || errorMessage.includes("Permission denied")) {
+    return new Error("Acesso negado. Verifique se a API Generative Language está ativada no seu projeto do Google Cloud.");
+  }
+
+  return new Error(`Falha ao comunicar com a IA para ${context}. Detalhes: ${errorMessage}`);
 };
 
 // Helper to find skill description from code to enrich the prompt
@@ -38,8 +100,8 @@ export const generatePedagogicalPrompt = async (
   classType: string,
   adaptationParams?: AdaptationParams // New optional parameter
 ): Promise<PedagogicalPrompt> => {
-  // Fix: Use gemini-2.5-pro for complex text generation and JSON output.
-  const model = 'gemini-2.5-pro';
+  // Use gemini-3-flash-preview for better stability and to avoid 500 Internal Server Errors.
+  const model = 'gemini-3-flash-preview';
   
   const skillDetails = skillCodes.map(code => {
     const description = getSkillDescription(code);
@@ -64,8 +126,8 @@ export const generatePedagogicalPrompt = async (
       DIRETRIZES FUNDAMENTAIS:
       - Fundamentação Científica: Toda adaptação deve ser baseada em princípios e recomendações de documentos científicos mundialmente reconhecidos (ex: DSM-5, CID-11, Diretrizes Internacionais para TDAH/TEA, CAS, etc.).
       - Foco na Habilidade (e não no Déficit): As atividades devem focar na habilidade que o aluno pode desenvolver, ajustando o método e o formato (andaime/scaffolding), não o objetivo curricular essencial.
-      - Suporte Visual Estruturado: Priorize a clareza visual, alto contraste e minimalismo nas descrições de imagens para evitar sobrecarga sensorial e facilitar o processamento cognitivo.
-      - Clareza e Estrutura: O output deve ser entregue em um formato claro, separando a atividade original (se aplicável) das estratégias de adaptação.
+      - Suporte Visual Estruturado: Priorize a clareza visual, alto contraste e minimalismo nas descrições de imagens para evitar sobrecarga sensorial e facilitar o processamento cognitivo. A imagem deve ser uma representação LITERAL e EXATA do que é pedido na atividade, sem elementos decorativos ou artísticos que possam confundir o aluno.
+      - Fidelidade Visual: Se a atividade pede "3 maçãs", a imagem deve conter exatamente 3 maçãs. Evite qualquer tipo de "ilusão" ou interpretação artística abstrata.
       
       A resposta DEVE ser um objeto JSON válido.`;
 
@@ -100,9 +162,9 @@ export const generatePedagogicalPrompt = async (
     3.  **objetosDeConhecimento**: Uma lista de objetos de conhecimento (ou objetivos curriculares da adaptação).
     4.  **conteudoTema**: Um nome ou título criativo para a atividade (ou Nome da Atividade Adaptada).
     5.  **contextualizacao**: Uma breve introdução para os alunos.
-    6.  **planoDeAula**: O plano de aula detalhado. ${adaptationParams ? 'Deve incluir o Perfil do Aluno (Transtorno e Nível).' : 'Deve ser estruturado em seções claras (OBJETIVOS, DESENVOLVIMENTO, DIFERENCIAÇÃO).'}
-    7.  **folhaDeAtividades**: O conteúdo da atividade para o aluno. ${adaptationParams ? 'Deve ser a Atividade Principal Adaptada passo a passo. IMPORTANTE: Se houver uso de imagens/pictogramas, descreva-os explicitamente no texto para guiar o aluno.' : 'Inclua cabeçalho.'}
-    8.  **sugestaoDeImagem**: Uma descrição detalhada para gerar uma imagem ilustrativa. ${adaptationParams ? 'Para atividades adaptadas, a descrição DEVE focar em um suporte visual minimalista: imagem com poucos elementos, traços simples e bem definidos, alto contraste, sem fundos complexos ou distrações visuais, servindo como um apoio cognitivo direto e claro para a tarefa (ex: pictogramas, esquemas simplificados, objetos isolados).' : ''}
+    6.  **planoDeAula**: O plano de aula detalhado. ${adaptationParams ? 'Deve incluir o Perfil do Aluno (Transtorno e Nível).' : 'Deve ser estruturado em seções claras (OBJETIVOS, DESENVOLVIMENTO, DIFERENCIAÇÃO).'} IMPORTANTE: Use dois "enters" (duas quebras de linha) entre cada item ou parágrafo para garantir uma leitura clara e organizada. NÃO utilize os termos "SÍNCRONA (ONLINE)" ou "ASSÍNCRONA (OFFLINE)" no desenvolvimento.
+    7.  **folhaDeAtividades**: O conteúdo da atividade para o aluno. ${adaptationParams ? 'Deve ser a Atividade Principal Adaptada passo a passo. IMPORTANTE: Se houver uso de imagens/pictogramas, descreva-os explicitamente no texto para guiar o aluno.' : 'Inclua cabeçalho.'} IMPORTANTE: Use dois "enters" (duas quebras de linha) entre cada questão ou seção para facilitar a leitura.
+    8.  **sugestaoDeImagem**: Uma descrição detalhada para gerar uma imagem ilustrativa. A descrição deve ser EXTREMAMENTE LITERAL, descrevendo objetos, quantidades e posições de forma objetiva, como se fosse um diagrama técnico ou uma fotografia clara. Evite termos como "estilo artístico", "mágico" ou "vibrante". Foque em: "Um desenho simples de [objeto] em fundo branco, com [quantidade] unidades, visto de frente". ${adaptationParams ? 'Para atividades adaptadas, a descrição DEVE focar em um suporte visual minimalista: imagem com poucos elementos, traços simples e bem definidos, alto contraste, sem fundos complexos ou distrações visuais, servindo como um apoio cognitivo direto e claro para a tarefa (ex: pictogramas, esquemas simplificados, objetos isolados).' : ''}
     9.  **quantidadeAulas**: A quantidade de aulas prevista.
     10. **diarioDeClasse**: Texto sucinto para registro. O formato DEVE ser: "[Código Alfanumérico] - [Descrição Sucinta]". Exemplo: "EF05MA01 - Atividade sobre números naturais". Não use parênteses para o código.
     11. **tipoDeAula**: Objeto com tipo e materiais.
@@ -116,8 +178,7 @@ export const generatePedagogicalPrompt = async (
     IMPORTANTE: Para os campos "planoDeAula" e "folhaDeAtividades", NÃO use formatação markdown como "**" ou "#" para ênfase ou títulos, exceto para tabelas [TABLE_START]...[TABLE_END].
     `;
 
-  try {
-    const responseSchemaProperties: any = {
+  const responseSchemaProperties: any = {
         codigoAlfanumerico: { type: Type.STRING },
         habilidade: { type: Type.STRING },
         objetosDeConhecimento: {
@@ -170,49 +231,54 @@ export const generatePedagogicalPrompt = async (
     }
 
     const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: userPrompt,
-      config: {
-        responseMimeType: "application/json",
-        systemInstruction,
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: responseSchemaProperties,
-          required: [
-            'codigoAlfanumerico', 'habilidade', 'objetosDeConhecimento', 'contextualizacao',
-            'planoDeAula', 'folhaDeAtividades', 'sugestaoDeImagem', 'quantidadeAulas', 'conteudoTema',
-            'diarioDeClasse', 'tipoDeAula', 'sugestaoAvaliacao', 'sugestaoVideoAula',
-            'sugestaoVideoLibras', 'sugestaoAudiodescricao', 'passoAPassoProfessor'
-          ]
+    console.log(`[Gemini Service] Generating content with model: ${model}`);
+
+    try {
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: userPrompt,
+        config: {
+          responseMimeType: "application/json",
+          systemInstruction,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: responseSchemaProperties,
+            required: [
+              'codigoAlfanumerico', 'habilidade', 'objetosDeConhecimento', 'contextualizacao',
+              'planoDeAula', 'folhaDeAtividades', 'sugestaoDeImagem', 'quantidadeAulas', 'conteudoTema',
+              'diarioDeClasse', 'tipoDeAula', 'sugestaoAvaliacao', 'sugestaoVideoAula',
+              'sugestaoVideoLibras', 'sugestaoAudiodescricao', 'passoAPassoProfessor'
+            ]
+          },
         },
-      },
-    });
+      });
 
-    const responseText = response.text.trim();
-    const result = JSON.parse(responseText);
-    return result as PedagogicalPrompt;
+      const responseText = response.text.trim();
+      const result = JSON.parse(responseText);
+      return result as PedagogicalPrompt;
 
-  } catch (error)
-{
-    console.error("Error generating pedagogical prompt:", error);
-    throw new Error("Falha ao comunicar com a IA para gerar a atividade.");
-  }
+    } catch (error) {
+      throw handleGeminiError(error, "gerar a atividade");
+    }
 };
 
 /**
  * Generates an image from a text prompt using the Gemini API.
  */
 export const generateImageFromPrompt = async (promptInPortuguese: string): Promise<string> => {
-  const model = 'imagen-4.0-generate-001';
+  const model = 'gemini-2.5-flash-image';
 
   const ai = getAI();
   // Translate the prompt to English for the image generation model
   let englishPrompt = promptInPortuguese;
   try {
     const translationResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `Translate the following image description to English, keeping it concise and clear for an image generation AI. If the description implies any text should appear in the image, that text MUST be in Brazilian Portuguese. Only return the translated text.\n\nPortuguese: "${promptInPortuguese}"\n\nEnglish:`,
+        model: 'gemini-3-flash-preview',
+        contents: `Translate the following image description to English. 
+        IMPORTANT: The translation must be EXTREMELY LITERAL and PRECISE. 
+        If the description mentions specific quantities (e.g., "3 apples"), the translation MUST clearly state "exactly 3 apples". 
+        Do not add artistic adjectives. If there's text to be shown, it must be in Brazilian Portuguese.
+        Only return the translated text.\n\nPortuguese: "${promptInPortuguese}"\n\nEnglish:`,
     });
     englishPrompt = translationResponse.text.trim();
   } catch(e) {
@@ -220,30 +286,39 @@ export const generateImageFromPrompt = async (promptInPortuguese: string): Promi
       // Fallback to original prompt if translation fails
   }
 
-
   try {
-    const ai = getAI();
-    const response = await ai.models.generateImages({
-      model: model,
-      prompt: englishPrompt,
+    const response = await ai.models.generateContent({
+      model,
+      contents: {
+        parts: [
+          {
+            text: `Create a pedagogical illustration for a 5th grade math activity. 
+            CRITICAL: The image MUST be an EXTREMELY LITERAL and ACCURATE representation of this description: "${englishPrompt}". 
+            RULES:
+            1. Exact quantities: If the description specifies a number of objects, show exactly that number.
+            2. No hallucinations: Do not add any extra objects, characters, or artistic backgrounds not mentioned.
+            3. Style: Clean, educational, technical illustration style. High contrast. White or neutral background.
+            4. Clarity: Objects should be clearly separated and easy to count or identify.
+            5. No abstract art: Avoid any "AI-style" artistic distortions or illusions.`,
+          },
+        ],
+      },
       config: {
-        numberOfImages: 1,
-        outputMimeType: 'image/png',
-        aspectRatio: '16:9', // Aspect ratio suitable for activities
+        imageConfig: {
+          aspectRatio: "1:1",
+        },
       },
     });
 
-    if (response.generatedImages && response.generatedImages.length > 0) {
-      // Fix: Correctly create a data URL from the base64 image bytes.
-      const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
-      const imageUrl = `data:image/png;base64,${base64ImageBytes}`;
-      return imageUrl;
-    } else {
-      throw new Error("Nenhuma imagem foi gerada.");
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
-
+    
+    throw new Error("Nenhuma imagem foi gerada.");
   } catch (error) {
     console.error("Error generating image:", error);
-    throw new Error("Falha ao comunicar com a IA para gerar a imagem.");
+    return ''; // Return empty string to fallback to placeholder
   }
 };
